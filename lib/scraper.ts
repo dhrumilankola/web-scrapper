@@ -19,9 +19,6 @@
  * │    - Return context for caller cleanup                      │
  * │    - Automatic cleanup on errors                            │
  * └─────────────────────────────────────────────────────────────┘
- * 
- * CRITICAL: Returns live Page and BrowserContext objects
- * Caller MUST close them after use to prevent memory leaks
  */
 
 import { Page, BrowserContext } from 'playwright';
@@ -77,7 +74,7 @@ const CONFIG = {
     NAVIGATION: 30000,
     TOTAL: 60000,
     SCREENSHOT: 10000,
-    WAIT_AFTER_LOAD: 2000,
+    WAIT_AFTER_LOAD: 3000,
   },
   SCREENSHOT: {
     TYPE: 'jpeg' as const,
@@ -166,6 +163,8 @@ async function performScrape(
 
     await navigateToUrl(page, url, requestId);
     await waitForModernWebApp(page, requestId);
+    await page.waitForTimeout(1500);
+
 
     // Parallelize content extraction and screenshot capture for better performance
     const [contentResult, screenshot] = await Promise.all([
@@ -236,8 +235,6 @@ async function extractAllContent(
     message: 'Extracting HTML from multiple sources',
   });
 
-  // Parallelize ALL content extraction operations including modal triggering
-  // Modal triggering can run alongside other operations for better performance
   const [modalTriggered, regularHTML, shadowHTML, a11yData, title] = await Promise.all([
     triggerAuthModals(page, requestId),
     page.content(),
@@ -285,10 +282,6 @@ function combineHTMLSources(regularHTML: string, shadowHTML: string): string {
  * SCREENSHOT CAPTURE
  *============================================================================*/
 
-/**
- * Captures page screenshot with error resilience
- * Screenshot failure is non-fatal - returns undefined on error
- */
 async function captureScreenshot(page: Page, requestId: string): Promise<string | undefined> {
   try {
     logger.info(requestId, 'SCRAPE_SCREENSHOT_START', {

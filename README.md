@@ -82,17 +82,43 @@ Click any demo site button (GitHub, Google, Twitter, LinkedIn, Vercel)
 
 ```
 ├── app/
-│   ├── page.tsx              # Main UI
-│   ├── layout.tsx            # Layout wrapper
-│   ├── globals.css           # Styles
-│   └── api/
-│       └── detect/
-│           └── route.ts      # Detection API
+│   ├── api/
+│   │   └── detect/
+│   │       └── route.ts
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   └── ui/
+│       ├── accordion.tsx
+│       ├── alert.tsx
+│       ├── button.tsx
+│       ├── card.tsx
+│       └── input.tsx
 ├── lib/
-│   ├── scraper.ts           # Playwright scraper
-│   └── detector.ts          # Auth detection logic
-├── .env.local               # Environment variables
-└── package.json
+│   ├── browser-pool.ts
+│   ├── cache.ts
+│   ├── detector.ts
+│   ├── logger.ts
+│   ├── modern-web-helpers.ts
+│   ├── scraper.ts
+│   ├── types/
+│   │   └── auth.types.ts
+│   └── utils.ts
+├── public/
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── next.svg
+│   ├── vercel.svg
+│   └── window.svg
+├── middleware.ts
+├── next.config.ts
+├── playwright.config.ts
+├── tailwind.config.ts
+├── package.json
+├── tsconfig.json
+├── Dockerfile
+└── Dockerfile.production
 ```
 
 ## 🛠️ Tech Stack

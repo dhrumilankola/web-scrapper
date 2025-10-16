@@ -20,24 +20,21 @@
  * - Intelligent fallback strategies
  * - Comprehensive timeout handling
  */
-
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Page } from 'playwright';
 import { logger } from './logger';
 import type { AuthComponent, DetectionResult, AIDetectionResponse } from '@/lib/types/auth.types';
 
-
 /*============================================================================*
  * CONFIGURATION
  *============================================================================*/
-
 const CONFIG = {
   TIMEOUTS: {
     AI_API: 60000,
-    EXTRACTION: 20000,
-    SELECTOR: 5000,
-    FALLBACK_OVERALL: 8000,
-    FALLBACK_PER_STRATEGY: 1500,
+    EXTRACTION: 35000,
+    SELECTOR: 8000,
+    FALLBACK_OVERALL: 12000,
+    FALLBACK_PER_STRATEGY: 3000,
   },
   HTML: {
     MAX_SIZE: 15000,
@@ -69,9 +66,23 @@ const HTML_EXTRACTION_PATTERNS: HTMLExtractionPattern[] = [
     regex: /<form[^>]*(?:login|signin|sign-in|signup|sign-up|auth|register)[^>]*>[\s\S]{0,1500}?<\/form>/gi,
   },
   {
-    name: 'auth-buttons',
+    name: 'nav-auth-sections',
+    regex: /<(?:nav|header|div)[^>]{0,300}>[\s\S]{0,3000}?(?:sign|login|register|auth|log in|sign up|join|get started)[\s\S]{0,3000}?<\/(?:nav|header|div)>/gi,
+    filter: (match: string) => {
+      const hasAuthElement = /(?:button|a|input)[^>]*(?:sign|login|register|auth)/i.test(match);
+      const hasAuthText = /(?:sign in|log in|login|register|sign up|join now|get started)/i.test(match);
+      return hasAuthElement || hasAuthText;
+    },
+  },
+  {
+    name: 'auth-buttons-and-links',
     regex: /<(?:button|a)[^>]*>[\s\S]{0,500}?<\/(?:button|a)>/gi,
-    filter: (match: string) => /sign|login|auth|continue|google|facebook|github|twitter|apple|microsoft|linkedin|amazon|passkey|magic/i.test(match),
+    filter: (match: string) => /sign|login|auth|continue|google|facebook|github|twitter|apple|microsoft|linkedin|amazon|passkey|magic|register|join|get started/i.test(match),
+  },
+  {
+    name: 'auth-buttons-with-context',
+    regex: /<(?:div|li|span|header|nav)[^>]{0,200}>[\s\S]{0,1500}?<(?:button|a)[^>]*>[\s\S]{0,800}?<\/(?:button|a)>[\s\S]{0,1500}?<\/(?:div|li|span|header|nav)>/gi,
+    filter: (match: string) => /sign|login|auth|continue|google|facebook|github|twitter|apple|microsoft|linkedin|amazon|passkey|magic|register|join|get started/i.test(match),
   },
   {
     name: 'auth-divs',
@@ -83,11 +94,9 @@ const HTML_EXTRACTION_PATTERNS: HTMLExtractionPattern[] = [
   },
 ];
 
-
 /*============================================================================*
  * TYPE DEFINITIONS
  *============================================================================*/
-
 interface ExtractionStrategy {
   readonly selector: string;
   readonly description: string;
@@ -125,13 +134,11 @@ export async function detectAuthentication(
   if (apiKey) {
     try {
       const aiResult = await detectWithAI(html, url, screenshot, page, apiKey, requestId);
-
       logger.success(requestId, 'DETECTION_COMPLETE', {
         method: 'ai',
         found: aiResult.found,
         componentCount: aiResult.components.length,
       }, startTime);
-
       return aiResult;
   } catch (_err) {
     logger.error(requestId, 'DETECTION_AI_FAILED', _err as Error, {
@@ -142,7 +149,6 @@ export async function detectAuthentication(
   }
 
   const patternResult = await detectWithPatterns(html, url, page, requestId);
-
   logger.success(requestId, 'DETECTION_COMPLETE', {
     method: 'pattern',
     found: patternResult.found,
@@ -151,7 +157,6 @@ export async function detectAuthentication(
 
   return patternResult;
 }
-
 
 /*============================================================================*
  * AI-POWERED DETECTION
@@ -176,7 +181,6 @@ async function detectWithAI(
   requestId: string
 ): Promise<DetectionResult> {
   const startTime = Date.now();
-
   logger.info(requestId, 'AI_DETECTION_START', {
     model: CONFIG.AI.MODEL,
     hasScreenshot: !!screenshot,
@@ -188,7 +192,6 @@ async function detectWithAI(
 
   const relevantHTML = extractRelevantHTML(html, requestId);
   const prompt = buildAIPrompt(url, relevantHTML, !!screenshot);
-
   const contentParts = buildContentParts(screenshot, prompt);
 
   logger.info(requestId, 'AI_API_CALL_START', {
@@ -227,20 +230,21 @@ async function detectWithAI(
     requestId
   );
 
+  const uniqueComponents = deduplicateComponents(componentsWithSnippets, requestId);
+
   logger.success(requestId, 'AI_DETECTION_SUCCESS', {
     found: aiResult.found,
-    componentCount: componentsWithSnippets.length,
+    componentCount: uniqueComponents.length,
   }, startTime);
 
   return {
     success: true,
     url,
     found: aiResult.found,
-    components: componentsWithSnippets,
+    components: uniqueComponents,
     detectionMethod: 'ai' as const,
   };
 }
-
 
 /*============================================================================*
  * AI HELPER FUNCTIONS
@@ -266,7 +270,6 @@ function buildContentParts(screenshot: string | undefined, prompt: string): Cont
   }
 
   contentParts.push({ text: prompt });
-
   return contentParts;
 }
 
@@ -284,12 +287,14 @@ AUTHENTICATION TYPES TO DETECT:
 
 1. **traditional** - Login forms with username/email + password fields
    - Look for: <form> with password input, email/username input
-   - Example: Traditional email + password login
+   - Look for: Links/buttons that say "Sign in", "Log in", "Login" (even if they lead to another page)
+   - Example: Traditional email + password login, or navigation to login page
 
 2. **oauth** - Social login buttons (OAuth/SSO providers)
    - Look for: Buttons/links for Google, Facebook, GitHub, Twitter, Microsoft, Apple, LinkedIn, Amazon, etc.
    - IMPORTANT: List ALL providers you see (scan the entire page carefully)
    - CRITICAL: OAuth is for EXTERNAL provider authentication (e.g., "Sign in with Google")
+   - Must explicitly mention provider name (Google, Facebook, etc.)
    - Example: "Continue with Google", "Sign in with GitHub", "Login with Facebook"
    
    **EXTRACTION STRATEGY FOR OAUTH (CRITICAL):**
@@ -314,11 +319,11 @@ AUTHENTICATION TYPES TO DETECT:
    - Look for: "Send magic link", OTP inputs, "Continue with passkey", WebAuthn buttons
 
 EXTRACTION STRATEGY:
-
 For each component you detect, provide a PLAYWRIGHT SELECTOR that can extract the HTML element(s).
 
 **Playwright Selector Guidelines:**
 - Use text content when possible: \`button:has-text("Continue with Google")\`
+- For links use: \`a:has-text("Sign in")\` or \`a[href*="login"]\`
 - For containers with multiple items: \`div:has(button:has-text("Continue with Google"))\`
 - For forms: \`form:has(input[type="password"])\`
 - Use attributes: \`[data-provider="google"]\` or \`[aria-label*="login"]\`
@@ -329,9 +334,9 @@ For each component you detect, provide a PLAYWRIGHT SELECTOR that can extract th
 2. For OAuth: If you see multiple providers (Google, Apple, GitHub), list them ALL
 3. For OAuth with multiple providers: Provide ONE selector that captures the CONTAINER with all buttons
 4. If unsure about exact selector, provide your best guess - fallback will handle it
+5. "Sign in" or "Log in" buttons WITHOUT provider names are TRADITIONAL auth, not OAuth
 
 REQUIRED JSON OUTPUT FORMAT:
-
 {
   "found": true,
   "components": [
@@ -383,9 +388,10 @@ Return ONLY valid JSON with Playwright selectors:`;
  * Priority order:
  * 1. Password forms (highest priority)
  * 2. Auth-related forms
- * 3. Auth buttons/links
- * 4. Auth container divs
- * 5. WebAuthn/Passkey elements
+ * 3. Navigation auth sections (headers, navbars)
+ * 4. Auth buttons/links with context
+ * 5. Auth container divs
+ * 6. WebAuthn/Passkey elements
  */
 function extractRelevantHTML(html: string, requestId: string): string {
   logger.info(requestId, 'HTML_EXTRACTION_START', {
@@ -394,9 +400,10 @@ function extractRelevantHTML(html: string, requestId: string): string {
 
   const extractedSections: string[] = [];
 
-  // Use pre-compiled patterns for better performance
+  /**
+   * Use pre-compiled patterns for better performance
+   */
   for (const pattern of HTML_EXTRACTION_PATTERNS) {
-    // Reset regex lastIndex for reuse (important for global regex)
     pattern.regex.lastIndex = 0;
     
     const matches = html.match(pattern.regex);
@@ -449,7 +456,6 @@ function parseAIResponse(responseText: string, requestId: string): AIDetectionRe
 
   try {
     const parsed = JSON.parse(cleanedJSON);
-
     logger.success(requestId, 'AI_RESPONSE_PARSE_SUCCESS', {
       componentsFound: parsed.components?.length || 0,
     });
@@ -465,7 +471,6 @@ function parseAIResponse(responseText: string, requestId: string): AIDetectionRe
     throw new Error('Failed to parse AI response');
   }
 }
-
 
 /*============================================================================*
  * PLAYWRIGHT EXTRACTION
@@ -505,7 +510,7 @@ async function extractSnippetsWithTimeout(
   logger.success(requestId, 'PLAYWRIGHT_EXTRACTION_COMPLETE', {
     componentCount: componentsWithSnippets.length,
     successCount: componentsWithSnippets.filter(
-      (c) => c.snippet && !c.snippet.includes('extraction failed')
+      (c) => c.snippet && !c.snippet.includes('extraction failed') && !c.snippet.includes('timed out')
     ).length,
   });
 
@@ -546,7 +551,6 @@ async function extractComponentSnippet(
         selector,
         snippetLength: snippet.length,
       });
-
       return {
         ...component,
         snippet: truncateSnippet(snippet),
@@ -585,15 +589,24 @@ async function extractWithSelector(
   requestId: string
 ): Promise<string | null> {
   try {
+    if (page.isClosed()) {
+      logger.warn(requestId, 'EXTRACTION_PAGE_CLOSED', 'Page closed, skipping', {
+        selector,
+      });
+      return null;
+    }
+
     const element = page.locator(selector).first();
 
     await element
       .waitFor({
-        state: 'attached',
+        state: 'visible',
         timeout: CONFIG.TIMEOUTS.SELECTOR,
       })
       .catch(() => {
-        /* Element doesn't exist */
+        /**
+         * Element doesn't exist or not visible, will return null
+         */
       });
 
     const count = await element.count();
@@ -603,14 +616,19 @@ async function extractWithSelector(
 
     return await element.evaluate((el) => el.outerHTML);
   } catch (err) {
-    logger.warn(requestId, 'EXTRACTION_TIMEOUT', 'Element extraction timeout', {
-      selector,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const isPageClosed = errorMsg.includes('closed') || errorMsg.includes('Target closed');
+
+    if (!isPageClosed) {
+      logger.warn(requestId, 'EXTRACTION_TIMEOUT', 'Element extraction timeout', {
+        selector,
+        error: errorMsg,
+      });
+    }
+
     return null;
   }
 }
-
 
 /*============================================================================*
  * INTELLIGENT FALLBACK EXTRACTION
@@ -708,6 +726,14 @@ async function extractOAuthFallback(
 async function extractTraditionalFallback(page: Page, requestId: string): Promise<string> {
   const strategies: ExtractionStrategy[] = [
     { selector: 'form:has(input[type="password"])', description: 'Password form' },
+    { selector: 'a:has-text("Sign in")', description: 'Sign in link' },
+    { selector: 'a:has-text("Log in")', description: 'Log in link' },
+    { selector: 'a:has-text("Login")', description: 'Login link' },
+    { selector: 'button:has-text("Sign in")', description: 'Sign in button' },
+    { selector: 'button:has-text("Log in")', description: 'Log in button' },
+    { selector: 'a[href*="login"]', description: 'Login URL link' },
+    { selector: 'a[href*="signin"]', description: 'Signin URL link' },
+    { selector: 'a[href*="auth"]', description: 'Auth URL link' },
     { selector: 'form[action*="login"]', description: 'Login action form' },
     { selector: 'form[action*="signin"]', description: 'Signin action form' },
     { selector: 'form[action*="auth"]', description: 'Auth action form' },
@@ -739,7 +765,6 @@ async function extractPasswordlessFallback(
   return snippet || `<!-- Passwordless (${method}) detected (could not extract HTML) -->`;
 }
 
-
 /*============================================================================*
  * EXTRACTION UTILITIES
  *============================================================================*/
@@ -748,18 +773,41 @@ async function extractPasswordlessFallback(
  * Builds OAuth extraction strategies for a given provider
  */
 function buildOAuthStrategies(provider: string): ExtractionStrategy[] {
+  const providerLower = provider.toLowerCase();
+  const providerCapital = provider.charAt(0).toUpperCase() + provider.slice(1).toLowerCase();
+
   return [
     {
-      selector: `button:has-text("${provider}")`,
-      description: `Direct text match: ${provider}`,
+      selector: `button:has-text("${providerCapital}")`,
+      description: `Button with provider name: ${providerCapital}`,
     },
     {
-      selector: `button:has-text("Sign in with ${provider}")`,
-      description: `Sign in pattern: ${provider}`,
+      selector: `a:has-text("${providerCapital}")`,
+      description: `Link with provider name: ${providerCapital}`,
     },
     {
-      selector: `[data-provider="${provider.toLowerCase()}"]`,
-      description: `Data attribute: ${provider}`,
+      selector: `button:has-text("Sign in with ${providerCapital}")`,
+      description: `Sign in button: ${providerCapital}`,
+    },
+    {
+      selector: `a:has-text("Sign in with ${providerCapital}")`,
+      description: `Sign in link: ${providerCapital}`,
+    },
+    {
+      selector: `button:has-text("Continue with ${providerCapital}")`,
+      description: `Continue button: ${providerCapital}`,
+    },
+    {
+      selector: `a:has-text("Continue with ${providerCapital}")`,
+      description: `Continue link: ${providerCapital}`,
+    },
+    {
+      selector: `[data-provider="${providerLower}"]`,
+      description: `Data attribute: ${providerLower}`,
+    },
+    {
+      selector: `[aria-label*="${providerCapital}" i]`,
+      description: `Aria label: ${providerCapital}`,
     },
   ];
 }
@@ -810,9 +858,47 @@ async function tryStrategiesSequentially(
       return snippet;
     }
   }
+
   return null;
 }
 
+/**
+ * Deduplicates authentication components based on snippet or type
+ *
+ * This prevents returning multiple identical components when AI selectors
+ * fail and fallbacks find the same element repeatedly.
+ */
+function deduplicateComponents(
+  components: AuthComponent[],
+  requestId: string
+): AuthComponent[] {
+  const uniqueMap = new Map<string, AuthComponent>();
+  const placeholderTypes = new Set<string>();
+
+  for (const component of components) {
+    const isPlaceholder = !component.snippet || component.snippet.startsWith('<!--');
+
+    if (isPlaceholder) {
+      if (!placeholderTypes.has(component.type)) {
+        placeholderTypes.add(component.type);
+        uniqueMap.set(`placeholder-${component.type}`, component);
+      }
+    } else if (component.snippet && !uniqueMap.has(component.snippet)) {
+      uniqueMap.set(component.snippet, component);
+    }
+  }
+
+  const uniqueComponents = Array.from(uniqueMap.values());
+
+  if (components.length > uniqueComponents.length) {
+    logger.info(requestId, 'COMPONENTS_DEDUPLICATED', {
+      originalCount: components.length,
+      finalCount: uniqueComponents.length,
+    });
+  }
+
+  return uniqueComponents;
+}
 
 /*============================================================================*
  * PATTERN-BASED DETECTION (LEGACY)
@@ -824,6 +910,7 @@ async function tryStrategiesSequentially(
  * 
  * Simplified version focusing on most common patterns:
  * - Traditional forms with password fields
+ * - Traditional links/buttons (Sign in, Log in, etc.)
  * - OAuth buttons (text-based search)
  */
 async function detectWithPatterns(
@@ -833,12 +920,13 @@ async function detectWithPatterns(
   requestId: string
 ): Promise<DetectionResult> {
   const startTime = Date.now();
-
   logger.info(requestId, 'PATTERN_DETECTION_START', {
     htmlSize: `${Math.round(html.length / 1024)}KB`,
   });
 
-  // Parallelize pattern detection for better performance
+  /**
+   * Parallelize pattern detection for better performance
+   */
   const [traditionalComponent, oauthComponent] = await Promise.all([
     detectTraditionalPattern(page, requestId),
     detectOAuthPattern(page, requestId),
@@ -872,36 +960,59 @@ async function detectWithPatterns(
 }
 
 /**
- * Detects traditional login forms
+ * Detects traditional login forms and navigation links
  */
 async function detectTraditionalPattern(
   page: Page,
   requestId: string
 ): Promise<AuthComponent | null> {
-  const formSnippet = await extractWithSelector(page, 'form:has(input[type="password"])', requestId);
+  /**
+   * Try multiple selectors for traditional auth
+   */
+  const selectors = [
+    'form:has(input[type="password"])',
+    'a:has-text("Sign in")',
+    'a:has-text("Log in")',
+    'button:has-text("Sign in")',
+    'button:has-text("Log in")',
+    'a[href*="login"]',
+    'a[href*="signin"]',
+  ];
 
-  if (!formSnippet) {
-    return null;
+  for (const selector of selectors) {
+    const snippet = await extractWithSelector(page, selector, requestId);
+    if (snippet) {
+      const fields: string[] = [];
+      
+      if (snippet.includes('type="email"') || snippet.includes('type="text"')) {
+        fields.push('email');
+      }
+      if (snippet.includes('type="password"')) {
+        fields.push('password');
+      }
+
+      /**
+       * If no fields found (e.g., it's a link), default to email/password
+       */
+      if (fields.length === 0) {
+        fields.push('email', 'password');
+      }
+
+      logger.info(requestId, 'PATTERN_FOUND', {
+        type: 'traditional',
+        fields: fields.join(', '),
+        selector,
+      });
+
+      return {
+        type: 'traditional',
+        snippet: truncateSnippet(snippet),
+        details: { fields },
+      };
+    }
   }
 
-  const fields: string[] = [];
-  if (formSnippet.includes('type="email"') || formSnippet.includes('type="text"')) {
-    fields.push('email');
-  }
-  if (formSnippet.includes('type="password"')) {
-    fields.push('password');
-  }
-
-  logger.info(requestId, 'PATTERN_FOUND', {
-    type: 'traditional',
-    fields: fields.join(', '),
-  });
-
-  return {
-    type: 'traditional',
-    snippet: truncateSnippet(formSnippet),
-    details: { fields },
-  };
+  return null;
 }
 
 /**
@@ -910,20 +1021,31 @@ async function detectTraditionalPattern(
 async function detectOAuthPattern(page: Page, requestId: string): Promise<AuthComponent | null> {
   const oauthProviders = ['google', 'facebook', 'github', 'twitter', 'apple', 'microsoft'];
   
-  // Check all providers in parallel for faster detection
+  /**
+   * Check all providers in parallel for faster detection
+   * Try both buttons and links
+   */
   const providerResults = await Promise.all(
-    oauthProviders.map(async (provider) => ({
-      provider,
-      snippet: await extractWithSelector(page, `button:has-text("${provider}")`, requestId),
-    }))
+    oauthProviders.flatMap((provider) => [
+      (async () => ({
+        provider,
+        snippet: await extractWithSelector(page, `button:has-text("${provider}")`, requestId),
+      }))(),
+      (async () => ({
+        provider,
+        snippet: await extractWithSelector(page, `a:has-text("${provider}")`, requestId),
+      }))(),
+    ])
   );
 
-  // Find providers that were detected
+  /**
+   * Find providers that were detected
+   */
   const foundProviders: string[] = [];
   let oauthSnippet = '';
 
   for (const result of providerResults) {
-    if (result.snippet) {
+    if (result.snippet && !foundProviders.includes(result.provider)) {
       foundProviders.push(result.provider);
       if (!oauthSnippet) {
         oauthSnippet = result.snippet;
@@ -948,7 +1070,6 @@ async function detectOAuthPattern(page: Page, requestId: string): Promise<AuthCo
     details: { providers: foundProviders },
   };
 }
-
 
 /*============================================================================*
  * UTILITY FUNCTIONS
