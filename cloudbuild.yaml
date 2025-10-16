@@ -1,0 +1,68 @@
+# ============================================
+# GOOGLE CLOUD BUILD CONFIGURATION
+# ============================================
+
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/auth-detector:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/auth-detector:latest'
+      - '-f'
+      - 'Dockerfile.production'
+      - '.'
+    timeout: 1200s
+
+  # Step 2: Push the image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/auth-detector:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/auth-detector:latest'
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'auth-detector'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/auth-detector:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '2Gi'
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '300'
+      - '--concurrency'
+      - '10'
+      - '--max-instances'
+      - '10'
+      - '--set-env-vars'
+      - 'NODE_ENV=production,NEXT_TELEMETRY_DISABLED=1'
+      - '--set-secrets'
+      - 'GEMINI_API_KEY=GEMINI_API_KEY:latest'
+
+# Options
+options:
+  machineType: 'N1_HIGHCPU_8'
+  timeout: 1800s
+
+# Images to be stored in Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/auth-detector:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/auth-detector:latest'
+

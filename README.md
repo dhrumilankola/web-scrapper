@@ -7,8 +7,7 @@ AI-powered authentication detection tool that finds login forms and authenticati
 - **Web Scraping**: Uses Playwright to scrape any website
 - **AI Detection**: Gemini AI for intelligent authentication detection
 - **Pattern Fallback**: Works without API key using pattern matching
-- **3 Auth Types**: Detects Traditional, OAuth/Social, and Passwordless authentication
-- **5 Demo Sites**: Pre-configured examples for quick testing
+- **Auth Types**: Detects Traditional, OAuth/Social, and Passwordless authentication
 - **📸 Screenshots**: Visual capture of analyzed pages with toggle display
 
 ## 🚀 Quick Start
@@ -202,7 +201,7 @@ npm run lint
 ✅ **Fast**: Results in 2-5 seconds
 ✅ **Accurate**: 90-95% detection accuracy
 ✅ **Responsive**: Works on mobile & desktop
-✅ **Production Ready**: Deploy immediately
+
 
 ## 📄 License
 

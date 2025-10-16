@@ -1,0 +1,116 @@
+# ============================================
+# PRODUCTION DOCKERFILE FOR GCP CLOUD RUN
+# ============================================
+
+# Stage 1: Dependencies
+FROM node:20-slim AS deps
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install ALL dependencies (including dev) for the build step
+RUN npm ci && npm cache clean --force
+
+# ============================================
+# Stage 2: Builder
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy source code
+COPY . .
+
+# Build Next.js app
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# AFTER build, prune dev dependencies for a smaller production image
+RUN npm prune --production
+
+# ============================================
+# Stage 3: Runner (Production)
+FROM node:20-slim AS runner
+
+WORKDIR /app
+
+# Set production environment
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=8080
+# Tell Playwright where to install and look for browsers. This is crucial for non-root users.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Install system dependencies for Playwright Chromium
+# These are the minimal deps needed for headless Chrome
+RUN apt-get update && apt-get install -y \
+    # Core dependencies
+    libnss3 \
+    libxss1 \
+    libasound2 \
+    libxtst6 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    # Font support
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    # Required libs
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    # Utilities
+    wget \
+    ca-certificates \
+    # Clean up
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy dependencies from builder
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+
+# Install Playwright Chromium ONLY to the system-wide path
+RUN npx playwright install chromium --with-deps && \
+    # Clean up npm cache after install to keep image small
+    rm -rf /root/.npm
+
+# Copy built Next.js app
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Copy necessary config files
+COPY --from=builder --chown=nextjs:nodejs /app/next.config.js ./
+COPY --from=builder --chown=nextjs:nodejs /app/playwright.config.ts ./
+
+# Switch to non-root user
+USER nextjs
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/detect || exit 1
+
+# Start Next.js
+CMD ["sh", "-c", "npm run start -- -p ${PORT:-8080}"]
+

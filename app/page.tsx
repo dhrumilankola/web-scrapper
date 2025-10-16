@@ -233,6 +233,9 @@ export default function Home() {
             <p className="mt-2 text-sm text-muted-foreground">
               It may take up to 30-60 seconds for some websites.
             </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              May not work for banking websites or websites with strict bot security.
+            </p>
           </div>
         )}
 
