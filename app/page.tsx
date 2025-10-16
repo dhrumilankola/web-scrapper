@@ -99,7 +99,8 @@ export default function Home() {
     try {
       console.log('🚀 [SUBMIT] Starting detection for:', targetUrl);
       
-      const response = await fetch('/api/detect', {
+      const apiEndpoint = process.env.NEXT_PUBLIC_API_ENDPOINT || '/api/detect';
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
