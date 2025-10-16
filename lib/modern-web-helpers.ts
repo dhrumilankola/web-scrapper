@@ -44,6 +44,7 @@ export async function triggerAuthModals(
     message: 'Attempting to reveal hidden auth modals',
   });
 
+  // Prioritized list: most common patterns first for faster detection
   const authTriggers = [
     { type: 'text', selector: 'button:has-text("Sign in")', name: 'Sign in button' },
     { type: 'text', selector: 'button:has-text("Log in")', name: 'Log in button' },
@@ -61,7 +62,19 @@ export async function triggerAuthModals(
     { type: 'class', selector: '.sign-in-btn', name: 'Sign in btn class' },
   ];
 
+  const startTime = Date.now();
+  const maxAttemptTime = 5000; // Cap total time spent on modal triggering
+
   for (const trigger of authTriggers) {
+    // Early exit if we've spent too long
+    if (Date.now() - startTime > maxAttemptTime) {
+      logger.info(requestId, 'AUTH_MODAL_TRIGGER_TIMEOUT', {
+        message: 'Max attempt time reached, continuing without modal',
+        timeSpent: `${Date.now() - startTime}ms`,
+      });
+      break;
+    }
+
     try {
       const element = await page.$(trigger.selector);
       if (element) {
@@ -71,8 +84,10 @@ export async function triggerAuthModals(
           action: 'clicking to reveal modal',
         });
 
-        await element.click({ timeout: 2000 });
-        await page.waitForTimeout(1500);
+        await element.click({ timeout: 1000 });
+        
+        // Reduced wait time with early modal detection
+        await page.waitForTimeout(300);
 
         const modalVisible = await page.evaluate(() => {
           const modals = document.querySelectorAll(
@@ -88,6 +103,7 @@ export async function triggerAuthModals(
           logger.success(requestId, 'AUTH_MODAL_REVEALED', {
             trigger: trigger.name,
             selector: trigger.selector,
+            totalTime: `${Date.now() - startTime}ms`,
           });
           return true;
         }
@@ -100,6 +116,7 @@ export async function triggerAuthModals(
   logger.info(requestId, 'AUTH_MODAL_TRIGGER_COMPLETE', {
     modalRevealed: false,
     message: 'No auth modals found or triggered',
+    totalTime: `${Date.now() - startTime}ms`,
   });
 
   return false;
@@ -189,8 +206,10 @@ export async function waitForModernWebApp(
     message: 'Waiting for modern web app to fully load',
   });
 
+  let achievedNetworkIdle = false;
   try {
     await page.waitForLoadState('networkidle', { timeout: 10000 });
+    achievedNetworkIdle = true;
     logger.success(requestId, 'MODERN_WEB_WAIT_NETWORK_IDLE', {
       message: 'Network idle achieved',
     });
@@ -200,10 +219,13 @@ export async function waitForModernWebApp(
     });
   }
 
-  await page.waitForTimeout(3000);
+  // Adaptive wait: shorter if network already idle, longer if timed out
+  const additionalWait = achievedNetworkIdle ? 500 : 1500;
+  await page.waitForTimeout(additionalWait);
 
   logger.success(requestId, 'MODERN_WEB_WAIT_COMPLETE', {
     message: 'Modern web app load wait complete',
+    additionalWait: `${additionalWait}ms`,
   });
 }
 

@@ -231,7 +231,7 @@ export default function Home() {
               <span>Analyzing website...</span>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">
-              It may take up to 30 seconds for some websites.
+              It may take up to 30-60 seconds for some websites.
             </p>
           </div>
         )}

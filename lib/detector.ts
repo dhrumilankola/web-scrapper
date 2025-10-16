@@ -33,7 +33,7 @@ import type { AuthComponent, DetectionResult, AIDetectionResponse } from '@/lib/
 
 const CONFIG = {
   TIMEOUTS: {
-    AI_API: 30000,
+    AI_API: 60000,
     EXTRACTION: 20000,
     SELECTOR: 5000,
     FALLBACK_OVERALL: 8000,
@@ -45,9 +45,43 @@ const CONFIG = {
     MAX_SNIPPET: 1500,
   },
   AI: {
-    MODEL: 'gemini-2.5-pro',
+    MODEL: 'gemini-2.5-flash',
   },
 } as const;
+
+/**
+ * Pre-compiled regex patterns for HTML extraction
+ * Significant performance improvement over compiling on each request
+ */
+interface HTMLExtractionPattern {
+  name: string;
+  regex: RegExp;
+  filter?: (match: string) => boolean;
+}
+
+const HTML_EXTRACTION_PATTERNS: HTMLExtractionPattern[] = [
+  {
+    name: 'password-forms',
+    regex: /<form[^>]*>[\s\S]{0,2000}?<input[^>]*type=["']password["'][^>]*>[\s\S]{0,2000}?<\/form>/gi,
+  },
+  {
+    name: 'auth-forms',
+    regex: /<form[^>]*(?:login|signin|sign-in|signup|sign-up|auth|register)[^>]*>[\s\S]{0,1500}?<\/form>/gi,
+  },
+  {
+    name: 'auth-buttons',
+    regex: /<(?:button|a)[^>]*>[\s\S]{0,500}?<\/(?:button|a)>/gi,
+    filter: (match: string) => /sign|login|auth|continue|google|facebook|github|twitter|apple|microsoft|linkedin|amazon|passkey|magic/i.test(match),
+  },
+  {
+    name: 'auth-divs',
+    regex: /<div[^>]*(?:class|id)=["'][^"']*(?:login|signin|sign-in|auth|authentication|oauth|social)[^"']*["'][^>]*>[\s\S]{0,1500}?<\/div>/gi,
+  },
+  {
+    name: 'webauthn-passkey',
+    regex: /<webauthn-subtle[^>]*>[\s\S]{0,800}?<\/webauthn-subtle>/gi,
+  },
+];
 
 
 /*============================================================================*
@@ -360,31 +394,11 @@ function extractRelevantHTML(html: string, requestId: string): string {
 
   const extractedSections: string[] = [];
 
-  const patterns = [
-    {
-      name: 'password-forms',
-      regex: /<form[^>]*>[\s\S]{0,2000}?<input[^>]*type=["']password["'][^>]*>[\s\S]{0,2000}?<\/form>/gi,
-    },
-    {
-      name: 'auth-forms',
-      regex: /<form[^>]*(?:login|signin|sign-in|signup|sign-up|auth|register)[^>]*>[\s\S]{0,1500}?<\/form>/gi,
-    },
-    {
-      name: 'auth-buttons',
-      regex: /<(?:button|a)[^>]*>[\s\S]{0,500}?<\/(?:button|a)>/gi,
-      filter: (match: string) => /sign|login|auth|continue|google|facebook|github|twitter|apple|microsoft|linkedin|amazon|passkey|magic/i.test(match),
-    },
-    {
-      name: 'auth-divs',
-      regex: /<div[^>]*(?:class|id)=["'][^"']*(?:login|signin|sign-in|auth|authentication|oauth|social)[^"']*["'][^>]*>[\s\S]{0,1500}?<\/div>/gi,
-    },
-    {
-      name: 'webauthn-passkey',
-      regex: /<webauthn-subtle[^>]*>[\s\S]{0,800}?<\/webauthn-subtle>/gi,
-    },
-  ];
-
-  for (const pattern of patterns) {
+  // Use pre-compiled patterns for better performance
+  for (const pattern of HTML_EXTRACTION_PATTERNS) {
+    // Reset regex lastIndex for reuse (important for global regex)
+    pattern.regex.lastIndex = 0;
+    
     const matches = html.match(pattern.regex);
     if (matches) {
       const filtered = pattern.filter ? matches.filter(pattern.filter) : matches;
@@ -818,18 +832,21 @@ async function detectWithPatterns(
   requestId: string
 ): Promise<DetectionResult> {
   const startTime = Date.now();
-  const components: AuthComponent[] = [];
 
   logger.info(requestId, 'PATTERN_DETECTION_START', {
     htmlSize: `${Math.round(html.length / 1024)}KB`,
   });
 
-  const traditionalComponent = await detectTraditionalPattern(page, requestId);
+  // Parallelize pattern detection for better performance
+  const [traditionalComponent, oauthComponent] = await Promise.all([
+    detectTraditionalPattern(page, requestId),
+    detectOAuthPattern(page, requestId),
+  ]);
+
+  const components: AuthComponent[] = [];
   if (traditionalComponent) {
     components.push(traditionalComponent);
   }
-
-  const oauthComponent = await detectOAuthPattern(page, requestId);
   if (oauthComponent) {
     components.push(oauthComponent);
   }
@@ -887,20 +904,29 @@ async function detectTraditionalPattern(
 }
 
 /**
- * Detects OAuth providers
+ * Detects OAuth providers (parallelized for performance)
  */
 async function detectOAuthPattern(page: Page, requestId: string): Promise<AuthComponent | null> {
   const oauthProviders = ['google', 'facebook', 'github', 'twitter', 'apple', 'microsoft'];
+  
+  // Check all providers in parallel for faster detection
+  const providerResults = await Promise.all(
+    oauthProviders.map(async (provider) => ({
+      provider,
+      snippet: await extractWithSelector(page, `button:has-text("${provider}")`, requestId),
+    }))
+  );
+
+  // Find providers that were detected
   const foundProviders: string[] = [];
   let oauthSnippet = '';
 
-  for (const provider of oauthProviders) {
-    const snippet = await extractWithSelector(page, `button:has-text("${provider}")`, requestId);
-    if (snippet && !oauthSnippet) {
-      oauthSnippet = snippet;
-      foundProviders.push(provider);
-    } else if (snippet) {
-      foundProviders.push(provider);
+  for (const result of providerResults) {
+    if (result.snippet) {
+      foundProviders.push(result.provider);
+      if (!oauthSnippet) {
+        oauthSnippet = result.snippet;
+      }
     }
   }
 

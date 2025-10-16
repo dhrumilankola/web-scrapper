@@ -3,6 +3,7 @@ import { scrapeWebsite } from '@/lib/scraper';
 import { detectAuthentication } from '@/lib/detector';
 import { logger } from '@/lib/logger';
 import { browserPool } from '@/lib/browser-pool';
+import { detectionCache } from '@/lib/cache';
 
 /**
  * API Route: POST /api/detect
@@ -53,6 +54,27 @@ export async function POST(request: Request) {
     logger.info(requestId, 'API_REQUEST_START', { url });
 
     /**
+     * Check cache first (99%+ faster for cache hits)
+     */
+    const cachedResult = detectionCache.get(url, requestId);
+    if (cachedResult) {
+      logger.success(requestId, 'API_REQUEST_SUCCESS_CACHED', {
+        found: cachedResult.found,
+        componentCount: cachedResult.components.length,
+        detectionMethod: cachedResult.detectionMethod,
+        duration: `${Date.now() - startTime}ms`,
+        cached: true,
+      }, startTime);
+
+      const res = NextResponse.json({
+        ...cachedResult,
+        cached: true,
+      });
+      Object.entries(corsHeaders).forEach(([k, v]) => res.headers.set(k, v));
+      return res;
+    }
+
+    /**
      * Step 1: Scrape website (get HTML + screenshot + live page)
      */
     const scrapeResult = await scrapeWebsite(url, requestId);
@@ -96,12 +118,18 @@ export async function POST(request: Request) {
       );
 
       /**
+       * Cache the detection result for future requests
+       */
+      detectionCache.set(url, detectionResult, requestId);
+
+      /**
        * Return successful detection result
        */
       const res = NextResponse.json({
         ...detectionResult,
         pageTitle: scrapeResult.title,
         screenshot: scrapeResult.screenshot,
+        cached: false,
       });
       Object.entries(corsHeaders).forEach(([k, v]) => res.headers.set(k, v));
       return res;
@@ -147,9 +175,27 @@ export async function POST(request: Request) {
 }
 
 /**
- * Health check endpoint
+ * Health check endpoint + Cache statistics
+ * 
+ * GET /api/detect - Returns service status and cache stats
+ * GET /api/detect?stats=true - Returns detailed cache statistics
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const showStats = searchParams.get('stats') === 'true';
+
+  if (showStats) {
+    const stats = detectionCache.getStats();
+    const res = NextResponse.json({
+      status: 'ok',
+      service: 'auth-component-detector',
+      version: '2.0.0',
+      cache: stats,
+    });
+    Object.entries(corsHeaders).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+  }
+
   const res = NextResponse.json({
     status: 'ok',
     service: 'auth-component-detector',
@@ -157,4 +203,39 @@ export async function GET() {
   });
   Object.entries(corsHeaders).forEach(([k, v]) => res.headers.set(k, v));
   return res;
+}
+
+/**
+ * Cache management endpoint
+ * 
+ * DELETE /api/detect - Clear entire cache or invalidate specific URL
+ * DELETE /api/detect?url=https://example.com - Invalidate specific URL
+ */
+export async function DELETE(request: Request) {
+  const requestId = Math.random().toString(36).substring(7);
+  const { searchParams } = new URL(request.url);
+  const url = searchParams.get('url');
+
+  if (url) {
+    // Invalidate specific URL
+    const deleted = detectionCache.delete(url, requestId);
+    const res = NextResponse.json({
+      success: true,
+      action: 'invalidate',
+      url,
+      deleted,
+    });
+    Object.entries(corsHeaders).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+  } else {
+    // Clear entire cache
+    detectionCache.clear(requestId);
+    const res = NextResponse.json({
+      success: true,
+      action: 'clear',
+      message: 'Cache cleared successfully',
+    });
+    Object.entries(corsHeaders).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+  }
 }

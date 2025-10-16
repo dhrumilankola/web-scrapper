@@ -167,8 +167,11 @@ async function performScrape(
     await navigateToUrl(page, url, requestId);
     await waitForModernWebApp(page, requestId);
 
-    const contentResult = await extractAllContent(page, requestId);
-    const screenshot = await captureScreenshot(page, requestId);
+    // Parallelize content extraction and screenshot capture for better performance
+    const [contentResult, screenshot] = await Promise.all([
+      extractAllContent(page, requestId),
+      captureScreenshot(page, requestId),
+    ]);
 
     logScrapeSuccess(requestId, url, contentResult, screenshot, startTime);
 
@@ -233,9 +236,10 @@ async function extractAllContent(
     message: 'Extracting HTML from multiple sources',
   });
 
-  const modalTriggered = await triggerAuthModals(page, requestId);
-
-  const [regularHTML, shadowHTML, a11yData, title] = await Promise.all([
+  // Parallelize ALL content extraction operations including modal triggering
+  // Modal triggering can run alongside other operations for better performance
+  const [modalTriggered, regularHTML, shadowHTML, a11yData, title] = await Promise.all([
+    triggerAuthModals(page, requestId),
     page.content(),
     extractShadowDOMContent(page, requestId),
     getAccessibilityAuthSignals(page, requestId),
@@ -252,6 +256,7 @@ async function extractAllContent(
     hasShadowDOM,
     hasAuthInA11y: a11yData.hasAuth,
     title: title.slice(0, 100),
+    modalTriggered,
   });
 
   return {
