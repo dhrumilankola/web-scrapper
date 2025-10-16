@@ -108,7 +108,8 @@ export async function triggerAuthModals(
           return true;
         }
       }
-    } catch (_err) {
+    } catch {
+      // Errors are expected if an element doesn't exist or isn't clickable, so we continue.
       continue;
     }
   }
@@ -190,9 +191,9 @@ export async function getAccessibilityAuthSignals(
     }
 
     return { hasAuth, signals };
-  } catch (_err) {
+  } catch (err) {
     logger.warn(requestId, 'A11Y_AUTH_CHECK_FAILED', 'Failed to check accessibility tree', {
-      error: _err instanceof Error ? _err.message : String(_err),
+      error: err instanceof Error ? err.message : String(err),
     });
     return { hasAuth: false, signals: [] };
   }
@@ -213,7 +214,7 @@ export async function waitForModernWebApp(
     logger.success(requestId, 'MODERN_WEB_WAIT_NETWORK_IDLE', {
       message: 'Network idle achieved',
     });
-  } catch (_err) {
+  } catch {
     logger.warn(requestId, 'MODERN_WEB_WAIT_TIMEOUT', 'Network idle timeout, continuing', {
       message: 'Site may still be loading resources',
     });

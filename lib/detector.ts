@@ -563,8 +563,8 @@ async function extractComponentSnippet(
       ...component,
       snippet: fallbackSnippet,
     };
-  } catch (_err) {
-    logger.error(requestId, 'PLAYWRIGHT_EXTRACTION_ERROR', _err as Error, {
+  } catch (err) {
+    logger.error(requestId, 'PLAYWRIGHT_EXTRACTION_ERROR', err as Error, {
       type: component.type,
       selector,
     });
@@ -602,9 +602,10 @@ async function extractWithSelector(
     }
 
     return await element.evaluate((el) => el.outerHTML);
-  } catch (_err) {
+  } catch (err) {
     logger.warn(requestId, 'EXTRACTION_TIMEOUT', 'Element extraction timeout', {
       selector,
+      error: err instanceof Error ? err.message : String(err),
     });
     return null;
   }
@@ -787,7 +788,7 @@ async function attemptStrategyWithTimeout(
     });
 
     return snippet;
-  } catch (_err) {
+  } catch {
     return null;
   }
 }

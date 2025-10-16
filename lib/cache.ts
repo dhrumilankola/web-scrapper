@@ -182,7 +182,7 @@ class DetectionCache {
       }
 
       // Return result without cache metadata
-      const { cachedAt, expiresAt, ...result } = cached;
+      const { cachedAt: _cachedAt, expiresAt: _expiresAt, ...result } = cached;
       return result;
     }
 

@@ -99,7 +99,7 @@ export default function Home() {
     try {
       console.log('🚀 [SUBMIT] Starting detection for:', targetUrl);
       
-      const apiEndpoint = process.env.NEXT_PUBLIC_API_ENDPOINT || '/api/detect';
+      const apiEndpoint = process.env['NEXT_PUBLIC_API_ENDPOINT'] || '/api/detect';
       const response = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
@@ -110,48 +110,19 @@ export default function Home() {
   
       console.log('📡 [RESPONSE] Status:', response.status, response.statusText);
       
-      const data = await response.json();
-      console.log('📦 [DATA] Received:', {
-        success: data.success,
-        found: data.found,
-        componentsCount: data.components?.length,
-        detectionMethod: data.detectionMethod,
-        hasScreenshot: !!data.screenshot,
-      });
-  
       if (!response.ok) {
-        console.error('❌ [ERROR] Response not OK:', data);
-        throw new Error(data.error || 'Failed to detect authentication');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Something went wrong');
       }
-  
-      if (!data.success) {
-        console.error('❌ [ERROR] Detection failed:', data.error);
-        throw new Error(data.error || 'Detection failed');
-      }
-  
-      const resultData: DetectionResult = {
-        success: data.success,
-        url: data.url,
-        found: data.found,
-        components: data.components || [],
-        detectionMethod: data.detectionMethod,
-        pageTitle: data.pageTitle,
-        screenshot: data.screenshot,
-      };
-  
-      console.log('✅ [STATE] Setting result:', resultData);
-      
-      setResult({ ...resultData });
-      
-      setTimeout(() => {
-        console.log('🔍 [VERIFY] Result state after update:', result);
-      }, 100);
-  
+
+      const data: DetectionResult = await response.json();
+      setResult(data);
     } catch (err) {
-      console.error('❌ [EXCEPTION] Error occurred:', err);
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
-      setError(errorMessage);
-      setResult(null);
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('An unknown error occurred');
+      }
     } finally {
       setLoading(false);
       console.log('🏁 [COMPLETE] Request completed');
